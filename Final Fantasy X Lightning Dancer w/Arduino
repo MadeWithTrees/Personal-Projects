@@ -1,0 +1,195 @@
+## IMPORTANT ##
+## THE CODE BELOW IS NOT MINE AND I'M ONLY USING IT AS A REFERENCE FOR WHEN I MAKE MY OWN PROGRAM ##
+
+###########
+## Setup ##
+###########
+#
+# 1. Download the lightning_dodger.py and trigger_key.py files and
+#    place them in the same directory
+#
+# 2. Install dependencies:
+#
+#    python3 -m pip install -U --user Pillow mss
+#
+#    (Optional, if you need to debug SCREEN_LOCATION)
+#    python3 -m pip install -U --user opencv-python
+#
+# 3. (If necessary) Configure the SCREEN_LOCATION variable
+#    to select the part of your screen that will be screenshotted
+#    to detect the flash. 
+#    Also, you may want to change the key pressed,
+#    which is "c" by default. You can do this by changing the value of
+#    VK_C in the trigger_key.py script. Alternate key values can be found
+#    at msdn.microsoft.com/en-us/library/dd375731
+
+###########
+## Usage ##
+###########
+#
+# 1. Load FFX in windowed mode. Make sure the SCREEN_LOCATION
+#    falls comfortably in the left-side, vertically centered part
+#    of the screen, so the in-game map does not throw off detection.
+#
+# 2. Run the following from Powershell:
+#    python3 lightning_dodger.py
+#
+# 3. Move your character into position
+#    (I recommend the crater in the southern plains, described in https://www.ign.com/wikis/final-fantasy-x/Lightning_Dancer )
+#
+# 4. (Optional) Use the game boosters to disable encounters, and speed up the game to 4x speed
+#    (might need to keep it at normal speed, though, if your computer is struggling to get a good frame rate for the
+#     detection)
+#
+# 5. Let the script do the dodging, and you just have to keep moving the character back into the right position. 
+
+import time
+import mss
+from trigger_key import PressKey, ReleaseKey, VK_C
+from PIL import Image, ImageStat
+
+SCREEN_LOCATION = {"top": 400, "left": 40, "width": 40, "height": 40}
+COLOR_MINIMUM_THRESHOLD = 150
+KEYPRESS_DURATION_SEC = 0.1
+
+sct = mss.mss()
+
+
+def check_if_whited_out():
+    sct_img = sct.grab(SCREEN_LOCATION)
+
+    # For debugging where you're looking on the screen
+    # window_title = "Test"
+    # import cv2
+    # import numpy
+    # cv2.imshow(window_title, numpy.asarray(sct_img))
+    # cv2.moveWindow(window_title, 400, 400)
+
+    img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
+    extrema = ImageStat.Stat(img).extrema
+
+    return all(e[0] > COLOR_MINIMUM_THRESHOLD for e in extrema)
+
+
+def lightning_dodger():
+    dodge_count = 0
+    last_is_whited_out = False
+    while True:
+        is_whited_out = check_if_whited_out()
+        if is_whited_out and not last_is_whited_out:
+            PressKey(VK_C)
+            time.sleep(KEYPRESS_DURATION_SEC)
+            ReleaseKey(VK_C)
+            dodge_count += 1
+            print(f"{dodge_count}x  you're welcome")
+
+        last_is_whited_out = is_whited_out
+
+
+lightning_dodger()
+
+
+
+# Code from https://stackoverflow.com/a/13615802
+
+import ctypes
+from ctypes import wintypes
+import time
+
+user32 = ctypes.WinDLL("user32", use_last_error=True)
+
+INPUT_MOUSE = 0
+INPUT_KEYBOARD = 1
+INPUT_HARDWARE = 2
+
+KEYEVENTF_EXTENDEDKEY = 0x0001
+KEYEVENTF_KEYUP = 0x0002
+KEYEVENTF_UNICODE = 0x0004
+KEYEVENTF_SCANCODE = 0x0008
+
+MAPVK_VK_TO_VSC = 0
+
+# msdn.microsoft.com/en-us/library/dd375731
+VK_TAB = 0x09
+VK_MENU = 0x12
+# C Key
+VK_C = 0x43
+
+# C struct definitions
+
+wintypes.ULONG_PTR = wintypes.WPARAM
+
+
+class MOUSEINPUT(ctypes.Structure):
+    _fields_ = (
+        ("dx", wintypes.LONG),
+        ("dy", wintypes.LONG),
+        ("mouseData", wintypes.DWORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", wintypes.ULONG_PTR),
+    )
+
+
+class KEYBDINPUT(ctypes.Structure):
+    _fields_ = (
+        ("wVk", wintypes.WORD),
+        ("wScan", wintypes.WORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", wintypes.ULONG_PTR),
+    )
+
+    def __init__(self, *args, **kwds):
+        super(KEYBDINPUT, self).__init__(*args, **kwds)
+        # some programs use the scan code even if KEYEVENTF_SCANCODE
+        # isn't set in dwFflags, so attempt to map the correct code.
+        if not self.dwFlags & KEYEVENTF_UNICODE:
+            self.wScan = user32.MapVirtualKeyExW(self.wVk, MAPVK_VK_TO_VSC, 0)
+
+
+class HARDWAREINPUT(ctypes.Structure):
+    _fields_ = (
+        ("uMsg", wintypes.DWORD),
+        ("wParamL", wintypes.WORD),
+        ("wParamH", wintypes.WORD),
+    )
+
+
+class INPUT(ctypes.Structure):
+    class _INPUT(ctypes.Union):
+        _fields_ = (("ki", KEYBDINPUT), ("mi", MOUSEINPUT), ("hi", HARDWAREINPUT))
+
+    _anonymous_ = ("_input",)
+    _fields_ = (("type", wintypes.DWORD), ("_input", _INPUT))
+
+
+LPINPUT = ctypes.POINTER(INPUT)
+
+
+def _check_count(result, func, args):
+    if result == 0:
+        raise ctypes.WinError(ctypes.get_last_error())
+    return args
+
+
+user32.SendInput.errcheck = _check_count
+user32.SendInput.argtypes = (
+    wintypes.UINT,  # nInputs
+    LPINPUT,  # pInputs
+    ctypes.c_int,
+)  # cbSize
+
+# Functions
+
+
+def PressKey(hexKeyCode):
+    x = INPUT(type=INPUT_KEYBOARD, ki=KEYBDINPUT(wVk=hexKeyCode))
+    user32.SendInput(1, ctypes.byref(x), ctypes.sizeof(x))
+
+
+def ReleaseKey(hexKeyCode):
+    x = INPUT(
+        type=INPUT_KEYBOARD, ki=KEYBDINPUT(wVk=hexKeyCode, dwFlags=KEYEVENTF_KEYUP)
+    )
+    user32.SendInput(1, ctypes.byref(x), ctypes.sizeof(x))
